@@ -1,5 +1,10 @@
+#[macro_use]
+extern crate serde_json;
+#[macro_use]
+extern crate serde;
+use serde::{Serialize, Deserialize};
 use std::env;
-use std::{fs, fs::read_dir};
+use std::{io::Read, fs, fs::read_dir};
 use std::process::exit;
 use anvil_region::AnvilChunkProvider;
 use clap::{Arg, App, SubCommand};
@@ -7,11 +12,42 @@ use clap::{Arg, App, SubCommand};
 use nbt::Result;
 use nbt::Blob;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PacketChunk {
+    x: f64,
+    z: f64,
+    groundUp: bool,
+    bitMap: i64,
+    heightmaps: serde_json::Value,
+    biomes: Vec<i64>,
+    chunkData: ChunkData,
+    blockEntities: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ChunkData {
+    Buffer {
+        data: Vec<i32>,
+    }
+}
+
 fn run(input: &str, output: &str) -> Result<()> {
     let chunk_provider = AnvilChunkProvider::new(&output);
     let reader = std::fs::read_dir(input)?;
     for entry in reader {
-        dbg!(entry);
+        if let Some(entry) = entry.ok()
+            .and_then(|entry| std::fs::OpenOptions::new().read(true).open(entry.path()).ok())
+            .and_then(|mut file| {
+                let mut st = String::new();
+                file.read_to_string(&mut st).ok()?;
+                Some(st)
+            })
+            .and_then(|e| serde_json::from_str(&e).ok())
+        {
+            let chunk: PacketChunk = entry;
+            println!("{} {}", chunk.x, chunk.z);
+        }
     }
     Ok(())
 }
