@@ -1,3 +1,4 @@
+use nbt::CompoundTag;
 use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -12,9 +13,14 @@ pub struct PacketChunk {
     pub blockEntities: Vec<i64>,
 }
 
-impl PacketChunk {
-    pub fn copy_into_compound_tag(self, tag: &mut nbt::CompoundTag) {
-
+impl Into<CompoundTag> for PacketChunk {
+    fn into(self) -> CompoundTag {
+        let mut chunk_compound_tag = CompoundTag::new();
+        let mut level_compound_tag = CompoundTag::new();
+        level_compound_tag.insert_i32("xPos", self.x);
+        level_compound_tag.insert_i32("zPos", self.z);
+        chunk_compound_tag.insert_compound_tag("Level", level_compound_tag);
+        chunk_compound_tag
     }
 }
 

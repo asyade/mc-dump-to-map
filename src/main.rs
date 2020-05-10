@@ -82,9 +82,12 @@ fn run(input: &str, output: &str, patch: &str) -> std::io::Result<()> {
                     error!("Failed to dup reguion: {:?}", e);
                 }
             }
-            info!("Patching  {}:{} ...", chunk.x, chunk.z);
-            let mut tag = patch_chunk.clone();
-            chunk.copy_into_compound_tag(&mut tag);
+            let chunk_x = chunk.x;
+            let chunk_z = chunk.z;
+            match chunk_provider.save_chunk(chunk_x, chunk_z, chunk.into()) {
+                Ok(_) => info!("{}:{} Patched !", chunk_x, chunk_z),
+                Err(e) => error!("{}:{} Failed to patch: {:?}", chunk_x, chunk_z, e),
+            }
         }
     }
     Ok(())
