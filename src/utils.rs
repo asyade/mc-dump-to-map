@@ -1,5 +1,47 @@
 use std::path::{Path, PathBuf};
 use std::fs;
+use std::io;
+use std::io::{Read, Write};
+use byteorder::{BigEndian, ReadBytesExt};
+
+pub trait VarIntegerReader {
+    fn read_var_i32(&mut self) -> io::Result<i32>;
+    fn read_var_i64(&mut self) -> io::Result<i64>;
+}
+
+impl <T: Read + ?Sized> VarIntegerReader for T {
+
+    fn read_var_i32(&mut self) -> io::Result<i32> {
+        let mut num_read: i32 = 0;
+        let mut result: i32 = 0;
+        loop{
+            let read = self.read_u8()?;
+            let value: i32 = read as i32 & 0b01111111;
+            result |= value << (7 * num_read);
+            num_read += 1;
+            if num_read > 5 {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "VarInt is too big"))
+            } else if (read & 0b10000000) != 0 {break}
+        }
+        Ok(result)
+    }
+
+    fn read_var_i64(&mut self) -> io::Result<i64> {
+        let mut num_read: i32 = 0;
+        let mut result: i64 = 0;
+        loop {
+            let read = self.read_u8()?;
+            let value: i64 = (read as i32 & 0b01111111) as i64;
+            result |= value << (7 * num_read);
+            num_read += 1;
+            if num_read > 10 {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "VarLong is too big"))
+            } else if (read & 0b10000000) != 0 { break }
+        }
+        Ok(result)
+    }
+}
+
 
 pub fn copy<U: AsRef<Path>, V: AsRef<Path>>(from: U, to: V) -> Result<(), std::io::Error> {
     let mut stack = Vec::new();
