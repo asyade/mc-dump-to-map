@@ -65,7 +65,6 @@ fn run(input: &str, output: &str, patch: &str) -> std::io::Result<()> {
     let src = world.region_path(0, 0);
     let chunk_provider = AnvilChunkProvider::new(world.path.to_str().unwrap());
     let reader = std::fs::read_dir(patch)?;
-    let patch_chunk = chunk_provider.load_chunk(0,0).expect("Base chunk in source world (0,0)");
     for entry in reader {
         if let Some(entry) = entry.ok()
             .and_then(|entry| std::fs::OpenOptions::new().read(true).open(entry.path()).ok())
@@ -74,7 +73,7 @@ fn run(input: &str, output: &str, patch: &str) -> std::io::Result<()> {
                 file.read_to_string(&mut st).ok()?;
                 Some(st)
             })
-            .and_then(|e| serde_json::from_str(&e).ok())
+            .and_then(|e| serde_json::from_str(&e).map_err(|e| error!("{:?}", e)).ok())
         {
             let chunk: PacketChunk = entry;
             if !world.region_path(chunk.x, chunk.z).exists() {
