@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate lazy_static;
 extern crate pretty_env_logger;
 #[macro_use] extern crate log;
 #[macro_use]
@@ -15,7 +17,6 @@ mod models;
 
 use models::*;
 use utils::copy;
-
 
 pub struct World {
     pub path: PathBuf,
@@ -83,7 +84,10 @@ fn run(input: &str, output: &str, patch: &str) -> std::io::Result<()> {
             }
             let chunk_x = chunk.x;
             let chunk_z = chunk.z;
-            match chunk_provider.save_chunk(chunk_x, chunk_z, chunk.into()) {
+            let chunk = chunk.into();
+            dbg!(chunk);
+            panic!("Puet");
+            match chunk_provider.save_chunk(chunk_x, chunk_z, chunk) {
                 Ok(_) => info!("{}:{} Patched !", chunk_x, chunk_z),
                 Err(e) => error!("{}:{} Failed to patch: {:?}", chunk_x, chunk_z, e),
             }

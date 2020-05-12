@@ -1,5 +1,95 @@
+use std::collections::HashMap;
+use std::{ops, io::{Seek, Read, SeekFrom}, io, collections::BTreeMap};
 use nbt::CompoundTag;
 use serde::{Serialize, Deserialize};
+use byteorder::{BigEndian, ReadBytesExt};
+use mc_varint::{VarInt, VarIntRead, VarLongRead};
+
+const VERSION: &str = "1.15.0";
+const LIGHT_SIZE: usize = 2048;
+const CHUNK_HEIGHT: i32 = 256;
+const SECTION_HEIGHT: i32 = 16;
+const SECTION_WIDTH: i32 = 16;
+const MAX_BITS_PER_BLOCK: u8 = 8;
+
+type BlockId = i64;
+
+lazy_static! {
+    static ref PALETTE: GlobalPalette = {
+        let mut file = std::fs::OpenOptions::new().read(true).open(std::env::var("PALETTE").expect("PALETTE")).expect("PALETTE File");
+        GlobalPalette::parse(file)
+    };
+}
+
+
+pub struct GlobalPalette {
+    blocks: HashMap<i64, BlockDefinition>
+}
+
+impl GlobalPalette {
+    /// Please be indulgent
+    fn parse<T: Read + Sized>(mut read: T) -> Self {
+        let mut blocks = HashMap::new();
+        if let serde_json::Value::Object(map) = serde_json::from_reader(read).expect("Wrong palette file") {
+            for (name, item) in map {
+                let item = item.as_object().unwrap();
+                for state in item.get("states").unwrap().as_array().unwrap().into_iter().map(|e| e.as_object().unwrap().get("id").unwrap()).map(|e| e.as_i64().unwrap()) {
+                    blocks.insert(state, BlockDefinition{name: name.clone()});
+                }
+            }
+        } else {
+            panic!("Wrong palette file");
+        }
+        GlobalPalette{ blocks }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct BlockDefinition {
+    name: String,
+}
+
+impl ops::Index<BlockId> for GlobalPalette {
+    type Output = BlockDefinition;
+    fn index(&self, index: BlockId) -> &BlockDefinition {
+        &self.blocks[&index]
+    }
+}
+
+pub trait ReadArrayExt {
+    fn read_u8_array(&mut self, size: usize) -> io::Result<Vec<u8>>;
+    fn read_i32_array(&mut self, size: usize) -> io::Result<Vec<i32>>;
+    fn read_varint_array(&mut self, size: usize) -> io::Result<Vec<i32>>;
+    fn read_varlong_array(&mut self, size: usize) -> io::Result<Vec<i64>>;
+}
+
+macro_rules! read_array {
+    ($size:expr, $read:expr) => {{
+        let mut array = Vec::with_capacity($size);
+        for _ in (0..$size).into_iter() {
+            array.push($read);
+        }
+        Ok(array)
+    }};
+}
+
+impl <T: Read + Sized> ReadArrayExt for T {
+    fn read_i32_array(&mut self, size: usize) -> io::Result<Vec<i32>> {
+        read_array!(size, self.read_i32::<BigEndian>()?)
+    }
+
+    fn read_u8_array(&mut self, size: usize) -> io::Result<Vec<u8>> {
+        read_array!(size, self.read_u8()?)
+    }
+
+    fn read_varint_array(&mut self, size: usize) -> io::Result<Vec<i32>> {
+        read_array!(size, i32::from(self.read_var_int()?))
+    }
+
+    fn read_varlong_array(&mut self, size: usize) -> io::Result<Vec<i64>> {
+        read_array!(size, i64::from(self.read_var_long()?))
+    }
+} 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HeightMaps {
@@ -61,9 +151,9 @@ impl Into<CompoundTag> for PacketChunk {
         level_compound_tag.insert_i8("isLightOn", 1);
         level_compound_tag.insert_compound_tag_vec("TileTicks", vec![]);
 
-        self.chunkData.read_data(self.bitMap, false);
+        let sections = self.chunkData.read_data(self.bitMap, false).expect("Invalide packet").into();
 
-        level_compound_tag.insert_compound_tag_vec("Sections", vec![]);
+        level_compound_tag.insert_compound_tag_vec("Sections", sections);
         level_compound_tag.insert_compound_tag_vec("PostProcessing", vec![]);
         level_compound_tag.insert_compound_tag("Structures", CompoundTag::new());
         level_compound_tag.insert_compound_tag_vec("LiquidTicks", vec![]);
@@ -80,89 +170,74 @@ pub struct ChunkData {
     data: Vec<u8>,
 }
 
-const CHUNK_HEIGHT: i32 = 128;
-const SECTION_HEIGHT: i32 = 16;
+#[derive(Debug, Clone)]
+pub struct ParsedChunkData {
+    chunks: BTreeMap<i32, Chunk>,
+}
 
+impl Into<Vec<CompoundTag>> for ParsedChunkData {
+    fn into(self) -> Vec<CompoundTag> {
+        self.chunks.into_iter().map(|(y, chunk)| {
+            let mut tag = CompoundTag::new();
+            tag.insert_compound_tag_vec("Palette", chunk.palette_compound());
+            // tag.insert_i8_vec("SkyLight", vec![0; 2048]);
+            tag.insert_i8("Y", y as i8);
+            tag
+        }).collect()
+    }
+}
 
-impl ChunkData {
-    pub fn read_data(&self, mask: i32, full: bool) {
-        let mut buffer = std::io::Cursor::new(&self.data);
-    for sectionY in (0..(CHUNK_HEIGHT / SECTION_HEIGHT)).into_iter().filter(|sectionY| mask & (1 << sectionY) != 0) {
-            dbg!(sectionY);    
-        // byte bitsPerBlock = ReadByte(data);
-            
-            // Palette palette = ChoosePalette(bitsPerBlock);
-            // palette.Read(data);
-// 
-          ////  A bitmask that contains bitsPerBlock set bits
-            // uint individualValueMask = (uint)((1 << bitsPerBlock) - 1);
-// 
-            // int dataArrayLength = ReadVarInt(data);
-            // UInt64[] dataArray = ReadUInt64Array(data, dataArrayLength);
-// 
-            // ChunkSection section = new ChunkSection();
-// 
-            // for (int y = 0; y < SECTION_HEIGHT; y++) {
-                // for (int z = 0; z < SECTION_WIDTH; z++) {
-                    // for (int x = 0; x < SECTION_WIDTH; x++) {
-                        // int blockNumber = (((blockY * SECTION_HEIGHT) + blockZ) * SECTION_WIDTH) + blockX;
-                        // int startLong = (blockNumber * bitsPerBlock) / 64;
-                        // int startOffset = (blockNumber * bitsPerBlock) % 64;
-                        // int endLong = ((blockNumber + 1) * bitsPerBlock - 1) / 64;
-// 
-                        // uint data;
-                        // if (startLong == endLong) {
-                            // data = (uint)(dataArray[startLong] >> startOffset);
-                        // } else {
-                            // int endOffset = 64 - startOffset;
-                            // data = (uint)(dataArray[startLong] >> startOffset | dataArray[endLong] << endOffset);
-                        // }
-                        // data &= individualValueMask;
-// 
-                  ////      data should always be valid for the palette
-                  ////      If you're reading a power of 2 minus one (15, 31, 63, 127, etc...) that's out of bounds,
-                  ////      you're probably reading light data instead
-// 
-                        // BlockState state = palette.StateForId(data);
-                        // section.SetState(x, y, z, state);
-                    // }
-                // }
-            // }
-// 
-            // for (int y = 0; y < SECTION_HEIGHT; y++) {
-                // for (int z = 0; z < SECTION_WIDTH; z++) {
-                    // for (int x = 0; x < SECTION_WIDTH; x += 2) {
-                  ////      Note: x += 2 above; we read 2 values along x each time
-                        // byte value = ReadByte(data);
-// 
-                        // section.SetBlockLight(x, y, z, value & 0xF);
-                        // section.SetBlockLight(x + 1, y, z, (value >> 4) & 0xF);
-                    // }
-                // }
-            // }
-// 
-            // if (currentDimension.HasSkylight()) { // IE, current dimension is overworld / 0
-                // for (int y = 0; y < SECTION_HEIGHT; y++) {
-                    // for (int z = 0; z < SECTION_WIDTH; z++) {
-                        // for (int x = 0; x < SECTION_WIDTH; x += 2) {
-                        ////    Note: x += 2 above; we read 2 values along x each time
-                            // byte value = ReadByte(data);
-// 
-                            // section.SetSkyLight(x, y, z, value & 0xF);
-                            // section.SetSkyLight(x + 1, y, z, (value >> 4) & 0xF);
-                        // }
-                    // }
-                // }
-            // }
-// 
-          //  May replace an existing section or a null one
-            // chunk.Sections[SectionY] = section;
+#[derive(Debug, Clone)]
+pub struct Chunk {
+    palette: Vec<i32>,
+    data: Vec<u8>,
+}
+
+impl Chunk {
+    pub fn palette_compound(&self) -> Vec<CompoundTag> {
+        self.palette.iter().map(|e| {
+            let mut tag = CompoundTag::new();
+            tag.insert_str("Name", &PALETTE[*e as i64].name);
+            tag
+        }).collect()
     }
 
-    // for (int z = 0; z < SECTION_WIDTH; z++) {
-        // for (int x = 0; x < SECTION_WIDTH; x++) {
-            // chunk.SetBiome(x, z, ReadInt(data));
-        // }
-    // }
-}    
+    pub fn block_states_compound(&self) -> Vec<i64> {
+        let buffer = &self.data[0..self.data.len()];
+        buffer.chunks(8)
+            .map(|e| {
+                0
+            })
+            .collect()
+    }
+}
+
+impl ChunkData {
+    pub fn read_data(&self, mask: i32, full: bool) -> io::Result<ParsedChunkData> {
+        let mut buffer = std::io::Cursor::new(&self.data);
+        let mut result = BTreeMap::new();
+        for section_y in (0..(CHUNK_HEIGHT / SECTION_HEIGHT)).into_iter().filter(|section_y| ((mask >> section_y) & 1) != 0).map(|e| e & 0x0F) {
+            let nbr_block = buffer.read_i16::<BigEndian>()?;
+            let bits_per_block = buffer.read_u8()?;
+            let palette = match bits_per_block {
+                0..=MAX_BITS_PER_BLOCK => {
+                    let palette_len = i32::from(buffer.read_var_int()?);
+                    buffer.read_varint_array(palette_len as usize)?
+                },
+                _ => vec![],
+            };
+            let data_len = i32::from(buffer.read_var_int()?);
+            let data_len_in_buff = ((data_len * 64) / 8) as usize;
+            info!("{} == {}", data_len, data_len_in_buff);
+            let mut data = vec![0; data_len_in_buff];
+            buffer.read_exact(&mut data)?;
+            // let mut data = buffer.read_varlong_array(data_len as usize)?;
+            info!("mask {} blocks {}, data len {}, bpb {}", mask, nbr_block, data_len, bits_per_block);
+            result.insert(section_y, Chunk {
+                palette,
+                data,
+            });
+        }
+        Ok(ParsedChunkData {chunks: result})
+    }
 }
