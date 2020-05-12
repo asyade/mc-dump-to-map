@@ -3,7 +3,6 @@ Convert minecraft chunk packet (https://wiki.vg/Chunk_Format) obtained using htt
 # Compatibility
 Version 1.15.x
 
-
 ## USAGE
 dump-to-map -o <output> -p <patch>
 
@@ -17,3 +16,4 @@ dump-to-map -o <output> -p <patch>
 
 ## ENVIRON
 * `PALETTE` (required) - path to the palette file (available in res/blocks-[VERSION])
+* `WORKER` - Number of worker thread (default 16)
