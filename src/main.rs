@@ -33,6 +33,12 @@ impl World {
         path
     }
 
+    pub fn region_path_from(mut path: PathBuf, x: i32, z: i32) -> PathBuf {
+        path.push(format!("r.{}.{}.mca", x, z));
+        path
+    }
+
+
     /// Copy the current world to another path and return the new world
     pub fn dup(self, path: PathBuf) -> std::io::Result<World> {
         copy(self.path, &path)?;
@@ -74,10 +80,13 @@ fn run(input: &str, output: &str, patch: &str) -> std::io::Result<()> {
                 file.read_to_string(&mut st).ok()?;
                 Some(st)
             })
-            .and_then(|e| serde_json::from_str(&e).map_err(|e| error!("{:?}", e)).ok())
+            .and_then(|e| serde_json::from_str(&e).map_err(move|err| error!("{:?}:{}", err, e)).ok())
         {
             let chunk: PacketChunk = entry;
-            if !world.region_path(chunk.x, chunk.z).exists() {
+            let region_path = world.region_path(chunk.x >> 5, chunk.z >> 5);
+            dbg!(&region_path); 
+            if !region_path.exists() {
+                dbg!("MKFILE");
                 if let Err(e) = world.dup_region((0, 0), (chunk.x >> 5, chunk.z >> 5)) {
                     error!("Failed to dup reguion: {:?}", e);
                 }

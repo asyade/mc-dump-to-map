@@ -133,10 +133,10 @@ pub struct PacketChunk {
     pub z: i32,
     pub groundUp: bool,
     pub bitMap: i32,
-    pub heightmaps: HeightMaps,
+    pub heightmaps: serde_json::Value,
     pub biomes: Vec<i32>,
     pub chunkData: ChunkData,
-    pub blockEntities: Vec<i64>,
+    pub blockEntities: serde_json::Value,
 }
 
 impl Into<CompoundTag> for PacketChunk {
