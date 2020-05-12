@@ -1,22 +1,19 @@
 use std::collections::HashMap;
-use std::{ops, io::{Seek, Read, SeekFrom}, io, collections::BTreeMap};
+use std::{ops, io::{Read}, io, collections::BTreeMap};
 use nbt::CompoundTag;
 use serde::{Serialize, Deserialize};
 use byteorder::{BigEndian, ReadBytesExt};
-use mc_varint::{VarInt, VarIntRead, VarLongRead};
+use mc_varint::{VarIntRead, VarLongRead};
 
-const VERSION: &str = "1.15.0";
-const LIGHT_SIZE: usize = 2048;
 const CHUNK_HEIGHT: i32 = 256;
 const SECTION_HEIGHT: i32 = 16;
-const SECTION_WIDTH: i32 = 16;
 const MAX_BITS_PER_BLOCK: u8 = 8;
 
 type BlockId = i64;
 
 lazy_static! {
     static ref PALETTE: GlobalPalette = {
-        let mut file = std::fs::OpenOptions::new().read(true).open(std::env::var("PALETTE").expect("PALETTE")).expect("PALETTE File");
+        let file = std::fs::OpenOptions::new().read(true).open(std::env::var("PALETTE").expect("PALETTE")).expect("PALETTE File");
         GlobalPalette::parse(file)
     };
 }
@@ -28,7 +25,7 @@ pub struct GlobalPalette {
 
 impl GlobalPalette {
     /// Please be indulgent
-    fn parse<T: Read + Sized>(mut read: T) -> Self {
+    fn parse<T: Read + Sized>(read: T) -> Self {
         let mut blocks: HashMap<i64, BlockDefinition> = HashMap::new();
         if let serde_json::Value::Object(map) = serde_json::from_reader(read).expect("Wrong palette file") {
             for (name, item) in map {
@@ -145,12 +142,16 @@ pub struct HeightMapsValue {
 pub struct PacketChunk {
     pub x: i32,
     pub z: i32,
-    pub groundUp: bool,
-    pub bitMap: i32,
+    #[serde(rename(deserialize = "groundUp"))]
+    pub ground_up: bool,
+    #[serde(rename(deserialize = "bitMap"))]
+    pub bit_map: i32,
     pub heightmaps: Option<HeightMaps>,
     pub biomes: Option<Vec<i32>>,
-    pub chunkData: ChunkData,
-    pub blockEntities: serde_json::Value,
+    #[serde(rename(deserialize = "chunkData"))]
+    pub chunk_data: ChunkData,
+    #[serde(rename(deserialize = "blockEntities"))]
+    pub block_entities: serde_json::Value,
 }
 
 impl Into<CompoundTag> for PacketChunk {
@@ -165,8 +166,8 @@ impl Into<CompoundTag> for PacketChunk {
         }
         level_compound_tag.insert_i64("InhabitedTime", 0);
         level_compound_tag.insert_i32("xPos", self.x);
-        if let Some(heightmaps) = self.heightmaps {
-            let mut heightmaps_compound = CompoundTag::new();
+        if let Some(_heightmaps) = self.heightmaps {
+            let heightmaps_compound = CompoundTag::new();
             //TODO heightmaps
             level_compound_tag.insert_compound_tag("Heightmaps", heightmaps_compound);
         }
@@ -175,7 +176,7 @@ impl Into<CompoundTag> for PacketChunk {
         level_compound_tag.insert_i8("isLightOn", 1);
         level_compound_tag.insert_compound_tag_vec("TileTicks", vec![]);
 
-        let sections = self.chunkData.read_data(self.bitMap, false).expect("Invalide packet").into();
+        let sections = self.chunk_data.read_data(self.bit_map).expect("Invalide packet").into();
 
         level_compound_tag.insert_compound_tag_vec("Sections", sections);
         level_compound_tag.insert_compound_tag_vec("PostProcessing", vec![]);
@@ -233,11 +234,11 @@ impl Chunk {
 }
 
 impl ChunkData {
-    pub fn read_data(&self, mask: i32, full: bool) -> io::Result<ParsedChunkData> {
+    pub fn read_data(&self, mask: i32) -> io::Result<ParsedChunkData> {
         let mut buffer = std::io::Cursor::new(&self.data);
         let mut result = BTreeMap::new();
         for section_y in (0..(CHUNK_HEIGHT / SECTION_HEIGHT)).into_iter().filter(|section_y| ((mask >> section_y) & 1) != 0).map(|e| e & 0x0F) {
-            let nbr_block = buffer.read_i16::<BigEndian>()?;
+            let _nbr_block = buffer.read_i16::<BigEndian>()?;
             let bits_per_block = buffer.read_u8()?;
             let palette = match bits_per_block {
                 0..=MAX_BITS_PER_BLOCK => {
@@ -247,10 +248,7 @@ impl ChunkData {
                 _ => vec![],
             };
             let data_len = i32::from(buffer.read_var_int()?);
-            let mut data = buffer.read_i64_array(data_len as usize).unwrap();
-        //    buffer.read_exact(&mut data)?;
-            // let mut data = buffer.read_varlong_array(data_len as usize)?;
-            // info!("mask {} blocks {}, data len {}, bpb {}", mask, nbr_block, data_len, bits_per_block);
+            let data = buffer.read_i64_array(data_len as usize).unwrap();
             result.insert(section_y, Chunk {
                 palette,
                 data,

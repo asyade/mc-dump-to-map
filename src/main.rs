@@ -2,77 +2,27 @@
 extern crate lazy_static;
 extern crate pretty_env_logger;
 #[macro_use] extern crate log;
-#[macro_use]
 extern crate serde_json;
-#[macro_use]
 extern crate serde;
-use std::env;
-use std::{io::Read, fs, fs::read_dir, path::PathBuf};
-use std::process::exit;
+use std::{io::Read, fs, path::PathBuf};
 use anvil_region::AnvilChunkProvider;
 use clap::{Arg, App, SubCommand};
 use std::collections::{BTreeMap, btree_map, VecDeque};
 use std::path::Path;
 use std::io;
 use std::thread;
+use std::net::TcpListener;
+use std::thread::spawn;
+use tungstenite::server::accept;
 
-mod utils;
 mod models;
 
 use models::*;
-use utils::copy;
 
-pub struct World {
-    pub path: PathBuf,
+pub fn region_path_from(mut path: PathBuf, x: i32, z: i32) -> PathBuf {
+    path.push(format!("r.{}.{}.mca", x, z));
+    path
 }
-
-impl World {
-    pub fn new(path: PathBuf) -> Self {
-        if !path.exists() {
-            let _ = std::fs::create_dir_all(&path);
-        }
-        Self {path}
-    }
-
-    pub fn region_path(&self, x: i32, z: i32) -> PathBuf {
-        let mut path = self.path.clone();
-        path.push(format!("r.{}.{}.mca", x, z));
-        path
-    }
-
-    pub fn region_path_from(mut path: PathBuf, x: i32, z: i32) -> PathBuf {
-        path.push(format!("r.{}.{}.mca", x, z));
-        path
-    }
-
-
-    /// Copy the current world to another path and return the new world
-    pub fn dup(self, path: PathBuf) -> std::io::Result<World> {
-        copy(self.path, &path)?;
-        Ok(Self {
-            path
-        })
-    }
-
-    /// Fill a rectangle of regions with `source_region`
-    pub fn fill_copy(&self, xmin: i32, zmin: i32, xmax: i32, zmax: i32, source_region: PathBuf) -> std::io::Result<()> {
-        for x in (xmin..xmax).into_iter() {
-            for z in (zmin..zmax).into_iter() {
-                let target = self.region_path(x, z);
-                let _ = std::fs::remove_file(&target);
-                let _ = std::fs::copy(&source_region, target);
-            }
-        }
-        Ok(())
-    }
-
-    pub fn dup_region(&self, source: (i32, i32), dest: (i32, i32)) -> std::io::Result<()> {
-        // let _ = std::fs::remove_file(self.region_path(dest.0, dest.1));
-        // std::fs::copy(self.region_path(source.0, source.1), self.region_path(dest.0, dest.1))?;
-        Ok(())
-    }
-}
-
 
 fn fname_xz(fname: &str) -> Option<(i32, i32)> {
     let mut fname = fname.split('_');
@@ -83,7 +33,6 @@ fn fname_xz(fname: &str) -> Option<(i32, i32)> {
 
 fn get_chunks_fmap<T: AsRef<Path>>(dir: T) -> io::Result<Vec<Vec<PathBuf>>> {
     let mut ret: BTreeMap<i32, BTreeMap<i32, Vec<PathBuf>>> = BTreeMap::new();
-    let mut total: usize = 0;
     for entry in fs::read_dir(dir)? {
         if let Some(path) = entry.ok().and_then(|e| Some(e.path())) {
             let fname = path.file_stem().unwrap().to_str().unwrap();
@@ -107,8 +56,8 @@ fn get_chunks_fmap<T: AsRef<Path>>(dir: T) -> io::Result<Vec<Vec<PathBuf>>> {
         }
     }
     let mut total = vec![];
-    for (x, item) in ret {
-        for (z, item) in item {
+    for (_x, item) in ret {
+        for (_z, item) in item {
             total.push(item);
         }
     }
@@ -131,13 +80,10 @@ impl WorkHandler {
 
     pub fn next(&mut self, chunk_provider: &mut AnvilChunkProvider<'_>) -> Option<()> {
         let path = self.payload.pop_back()?;
-        let world = World::new(path);
-        let src = world.region_path(0, 0);
-        let mut file= std::fs::OpenOptions::new().read(true).open(&world.path).ok()?;
+        let mut file= std::fs::OpenOptions::new().read(true).open(&path).ok()?;
         self.buffer.clear();
         file.read_to_string(&mut self.buffer).ok()?;
         let chunk: PacketChunk = serde_json::from_str(&self.buffer).ok()?;
-        let region_path = world.region_path(chunk.x >> 5, chunk.z >> 5);
         let chunk_x = chunk.x;
         let chunk_z = chunk.z;
         let chunk = chunk.into();
@@ -165,8 +111,8 @@ fn run(output: &str, patch: &str) -> std::io::Result<()> {
     let mut chunks = get_chunks_fmap(&patch)?;
     let nbr_chunk_per_thread = chunks.len() / NBR_THREAD;
     let mut join = Vec::with_capacity(NBR_THREAD);
-    for id in (0..(NBR_THREAD - 1)).into_iter() {
-        if (chunks.len() > nbr_chunk_per_thread) {
+    for _ in (0..(NBR_THREAD - 1)).into_iter() {
+        if chunks.len() > nbr_chunk_per_thread {
             let h = WorkHandler::spawn(chunks.drain(0 .. nbr_chunk_per_thread).collect(), output.clone());
             join.push(h);
         } else {
@@ -176,7 +122,7 @@ fn run(output: &str, patch: &str) -> std::io::Result<()> {
     join.push(WorkHandler::spawn(chunks, output.clone()));
     let mut cptr = join.len();
     for join in join.into_iter() {
-        join.join();
+        let _ = join.join();
         cptr -= 1;
         info!("{} worker remaning ...", cptr);
     }
@@ -210,15 +156,41 @@ fn main() {
                 .about("Listen for chunk sections over a websocket and apply them to an existing minecraft world")
                 .arg(
                     Arg::with_name("port")
+                        .help("Listen port")
+                        .default_value("4242")
                         .short("p")
-                        .required(true)
                         .takes_value(true)
                 )
         )
         .get_matches();
     let output = matches.value_of("output").unwrap();
-    let patch = matches.value_of("patch").unwrap();
-    if let Err(e) = run( output, patch) {
-        eprintln!("{}", e);
+    match  matches.subcommand() {
+        ("bulk", Some(matches)) => {
+            let patch = matches.value_of("patch").unwrap();
+            if let Err(e) = run( output, patch) {
+                eprintln!("{}", e);
+            }
+        },
+        ("listen", Some(matches)) => {
+            let port = matches.value_of("port").and_then(|port| port.parse().ok()).unwrap_or(4242u32);
+            let addr = format!("127.0.0.1:{}", port);
+            let server = TcpListener::bind(&addr).unwrap();
+            info!("Listening on {} ...", addr);
+            for stream in server.incoming() {
+                let path = output.clone();
+                spawn (move || {
+                    let mut websocket = accept(stream.unwrap()).unwrap();
+                    loop {
+                        let msg = websocket.read_message().unwrap();
+                    
+                        // We do not want to send back ping/pong messages.
+                        if msg.is_binary() || msg.is_text() {
+                            websocket.write_message(msg).unwrap();
+                        }
+                    }
+                });
+            }
+        }
+        _ => error!("Unknow subcommand"),
     }
 }
