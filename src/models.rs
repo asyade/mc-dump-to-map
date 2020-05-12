@@ -59,6 +59,7 @@ impl ops::Index<BlockId> for GlobalPalette {
 pub trait ReadArrayExt {
     fn read_u8_array(&mut self, size: usize) -> io::Result<Vec<u8>>;
     fn read_i32_array(&mut self, size: usize) -> io::Result<Vec<i32>>;
+    fn read_i64_array(&mut self, size: usize) -> io::Result<Vec<i64>>;
     fn read_varint_array(&mut self, size: usize) -> io::Result<Vec<i32>>;
     fn read_varlong_array(&mut self, size: usize) -> io::Result<Vec<i64>>;
 }
@@ -76,6 +77,10 @@ macro_rules! read_array {
 impl <T: Read + Sized> ReadArrayExt for T {
     fn read_i32_array(&mut self, size: usize) -> io::Result<Vec<i32>> {
         read_array!(size, self.read_i32::<BigEndian>()?)
+    }
+
+    fn read_i64_array(&mut self, size: usize) -> io::Result<Vec<i64>> {
+        read_array!(size, self.read_i64::<BigEndian>()?)
     }
 
     fn read_u8_array(&mut self, size: usize) -> io::Result<Vec<u8>> {
@@ -179,8 +184,9 @@ impl Into<Vec<CompoundTag>> for ParsedChunkData {
     fn into(self) -> Vec<CompoundTag> {
         self.chunks.into_iter().map(|(y, chunk)| {
             let mut tag = CompoundTag::new();
+            tag.insert_i64_vec("BlockStates", chunk.block_states_compound());
             tag.insert_compound_tag_vec("Palette", chunk.palette_compound());
-            // tag.insert_i8_vec("SkyLight", vec![0; 2048]);
+            tag.insert_i8_vec("SkyLight", vec![0; 2048]);
             tag.insert_i8("Y", y as i8);
             tag
         }).collect()
@@ -190,7 +196,7 @@ impl Into<Vec<CompoundTag>> for ParsedChunkData {
 #[derive(Debug, Clone)]
 pub struct Chunk {
     palette: Vec<i32>,
-    data: Vec<u8>,
+    data: Vec<i64>,
 }
 
 impl Chunk {
@@ -203,12 +209,7 @@ impl Chunk {
     }
 
     pub fn block_states_compound(&self) -> Vec<i64> {
-        let buffer = &self.data[0..self.data.len()];
-        buffer.chunks(8)
-            .map(|e| {
-                0
-            })
-            .collect()
+        self.data.clone()
     }
 }
 
@@ -227,10 +228,8 @@ impl ChunkData {
                 _ => vec![],
             };
             let data_len = i32::from(buffer.read_var_int()?);
-            let data_len_in_buff = ((data_len * 64) / 8) as usize;
-            info!("{} == {}", data_len, data_len_in_buff);
-            let mut data = vec![0; data_len_in_buff];
-            buffer.read_exact(&mut data)?;
+            let mut data = buffer.read_i64_array(data_len as usize).unwrap();
+        //    buffer.read_exact(&mut data)?;
             // let mut data = buffer.read_varlong_array(data_len as usize)?;
             info!("mask {} blocks {}, data len {}, bpb {}", mask, nbr_block, data_len, bits_per_block);
             result.insert(section_y, Chunk {

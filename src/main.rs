@@ -85,8 +85,6 @@ fn run(input: &str, output: &str, patch: &str) -> std::io::Result<()> {
             let chunk_x = chunk.x;
             let chunk_z = chunk.z;
             let chunk = chunk.into();
-            dbg!(chunk);
-            panic!("Puet");
             match chunk_provider.save_chunk(chunk_x, chunk_z, chunk) {
                 Ok(_) => info!("{}:{} Patched !", chunk_x, chunk_z),
                 Err(e) => error!("{}:{} Failed to patch: {:?}", chunk_x, chunk_z, e),
