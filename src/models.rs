@@ -23,30 +23,44 @@ lazy_static! {
 
 
 pub struct GlobalPalette {
-    blocks: HashMap<i64, BlockDefinition>
+    blocks: HashMap<i64, BlockDefinition>,
 }
 
 impl GlobalPalette {
     /// Please be indulgent
     fn parse<T: Read + Sized>(mut read: T) -> Self {
-        let mut blocks = HashMap::new();
+        let mut blocks: HashMap<i64, BlockDefinition> = HashMap::new();
         if let serde_json::Value::Object(map) = serde_json::from_reader(read).expect("Wrong palette file") {
             for (name, item) in map {
                 let item = item.as_object().unwrap();
-                for state in item.get("states").unwrap().as_array().unwrap().into_iter().map(|e| e.as_object().unwrap().get("id").unwrap()).map(|e| e.as_i64().unwrap()) {
-                    blocks.insert(state, BlockDefinition{name: name.clone()});
+                for state in item.get("states").unwrap().as_array().unwrap().into_iter().map(|e| e.as_object().unwrap()) {
+                    let id = state.get("id").unwrap().as_i64().expect("ID");
+                    let properties = if let Some(props) = state.get("properties").and_then(|e| e.as_object()) {
+                        let mut properties = CompoundTag::named("Properties");
+                        for (k, v) in props.iter() {
+                            match v {
+                                serde_json::Value::String(s) => properties.insert_str(k, &s),
+                                _ => unimplemented!(),
+                            }
+                        }
+                        Some(properties)
+                    } else { None };
+                    blocks.insert(id, BlockDefinition{name: name.clone(), properties});
                 }
             }
         } else {
             panic!("Wrong palette file");
         }
-        GlobalPalette{ blocks }
+        GlobalPalette {
+            blocks
+        }
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct BlockDefinition {
     name: String,
+    properties: Option<CompoundTag>,
 }
 
 impl ops::Index<BlockId> for GlobalPalette {
@@ -133,8 +147,8 @@ pub struct PacketChunk {
     pub z: i32,
     pub groundUp: bool,
     pub bitMap: i32,
-    pub heightmaps: serde_json::Value,
-    pub biomes: Vec<i32>,
+    pub heightmaps: Option<HeightMaps>,
+    pub biomes: Option<Vec<i32>>,
     pub chunkData: ChunkData,
     pub blockEntities: serde_json::Value,
 }
@@ -146,11 +160,16 @@ impl Into<CompoundTag> for PacketChunk {
         level_compound_tag.insert_str("Status", "full");
         level_compound_tag.insert_i32("zPos", self.z);
         level_compound_tag.insert_i64("LastUpdate", 3);
-        level_compound_tag.insert_i32_vec("Biomes", self.biomes);
+        if let Some(biomes) = self.biomes {
+            level_compound_tag.insert_i32_vec("Biomes", biomes);
+        }
         level_compound_tag.insert_i64("InhabitedTime", 0);
         level_compound_tag.insert_i32("xPos", self.x);
-        let mut heightmaps_compound = CompoundTag::new();
-        level_compound_tag.insert_compound_tag("Heightmaps", heightmaps_compound);
+        if let Some(heightmaps) = self.heightmaps {
+            let mut heightmaps_compound = CompoundTag::new();
+            //TODO heightmaps
+            level_compound_tag.insert_compound_tag("Heightmaps", heightmaps_compound);
+        }
         level_compound_tag.insert_compound_tag_vec("TileEntities", vec![]);
         level_compound_tag.insert_compound_tag_vec("Entities", vec![]);
         level_compound_tag.insert_i8("isLightOn", 1);
@@ -231,7 +250,7 @@ impl ChunkData {
             let mut data = buffer.read_i64_array(data_len as usize).unwrap();
         //    buffer.read_exact(&mut data)?;
             // let mut data = buffer.read_varlong_array(data_len as usize)?;
-            info!("mask {} blocks {}, data len {}, bpb {}", mask, nbr_block, data_len, bits_per_block);
+            // info!("mask {} blocks {}, data len {}, bpb {}", mask, nbr_block, data_len, bits_per_block);
             result.insert(section_y, Chunk {
                 palette,
                 data,
