@@ -163,11 +163,11 @@ fn main() {
                 )
         )
         .get_matches();
-    let output = matches.value_of("output").unwrap();
+    let output = matches.value_of("output").unwrap().to_string();
     match  matches.subcommand() {
         ("bulk", Some(matches)) => {
             let patch = matches.value_of("patch").unwrap();
-            if let Err(e) = run( output, patch) {
+            if let Err(e) = run(&output, patch) {
                 eprintln!("{}", e);
             }
         },
@@ -179,13 +179,24 @@ fn main() {
             for stream in server.incoming() {
                 let path = output.clone();
                 spawn (move || {
+                    let chunk_provider = AnvilChunkProvider::new(&path);
                     let mut websocket = accept(stream.unwrap()).unwrap();
                     loop {
                         let msg = websocket.read_message().unwrap();
-                    
-                        // We do not want to send back ping/pong messages.
                         if msg.is_binary() || msg.is_text() {
-                            websocket.write_message(msg).unwrap();
+                            if let Ok(chunk) = serde_json::from_slice(&msg.into_data()) {
+                                let chunk: PacketChunk = chunk;
+                                let chunk_x = chunk.x;
+                                let chunk_z = chunk.z;
+                                let chunk = chunk.into();
+                                match chunk_provider.save_chunk(chunk_x, chunk_z, chunk) {
+                                    Ok(_) => info!("{}:{} Patched !", chunk_x, chunk_z),
+                                    Err(e) => error!("{}:{} Failed to patch: {:?}", chunk_x, chunk_z, e),
+                                }    
+                            } else {
+                                warn!("Invalide packet received !");
+                            }
+                            //websocket.write_message(msg).unwrap();
                         }
                     }
                 });
