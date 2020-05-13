@@ -130,6 +130,7 @@ fn run(output: &str, patch: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+
 fn main() {
     pretty_env_logger::init();
     let matches = App::new("dump-to-map")
@@ -179,24 +180,27 @@ fn main() {
             for stream in server.incoming() {
                 let path = output.clone();
                 spawn (move || {
-                    let chunk_provider = AnvilChunkProvider::new(&path);
+                    let provider = AnvilChunkProvider::new(&path);
                     let mut websocket = accept(stream.unwrap()).unwrap();
                     loop {
-                        let msg = websocket.read_message().unwrap();
-                        if msg.is_binary() || msg.is_text() {
-                            if let Ok(chunk) = serde_json::from_slice(&msg.into_data()) {
-                                let chunk: PacketChunk = chunk;
-                                let chunk_x = chunk.x;
-                                let chunk_z = chunk.z;
-                                let chunk = chunk.into();
-                                match chunk_provider.save_chunk(chunk_x, chunk_z, chunk) {
-                                    Ok(_) => info!("{}:{} Patched !", chunk_x, chunk_z),
-                                    Err(e) => error!("{}:{} Failed to patch: {:?}", chunk_x, chunk_z, e),
-                                }    
+                        if let Ok(msg) = websocket.read_message() {
+                            if msg.is_binary() || msg.is_text() {
+                                if let Ok(chunk) = serde_json::from_slice(&msg.into_data()) {
+                                    let chunk: PacketChunk = chunk;
+                                    let chunk_x = chunk.x;
+                                    let chunk_z = chunk.z;
+                                    let chunk = chunk.into();
+                                    match provider.save_chunk(chunk_x, chunk_z, chunk) {
+                                        Ok(_) => info!("{}:{} Patched !", chunk_x, chunk_z),
+                                        Err(e) => error!("{}:{} Failed to patch: {:?}", chunk_x, chunk_z, e),
+                                    }    
+                                } else {
+                                    warn!("Invalide packet received !");
+                                }
                             } else {
-                                warn!("Invalide packet received !");
+                                info!("Connection closed !");
+                                break
                             }
-                            //websocket.write_message(msg).unwrap();
                         }
                     }
                 });
