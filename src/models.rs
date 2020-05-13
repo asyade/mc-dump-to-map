@@ -224,7 +224,11 @@ impl Chunk {
         self.palette.iter().map(|e| {
             let mut tag = CompoundTag::new();
             tag.insert_str("Name", &PALETTE[*e as i64].name);
+            if let Some(properties) = PALETTE[*e as i64].properties.clone() {
+                tag.insert_compound_tag("Properties", properties);
+            }
             tag
+            
         }).collect()
     }
 
