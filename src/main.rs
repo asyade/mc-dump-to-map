@@ -148,6 +148,7 @@ fn main() {
                     Arg::with_name("patch")
                         .help("A directory containing JOSN chunk regions")
                         .short("p")
+                        .long("patch")
                         .required(true)
                         .takes_value(true)
                 )
@@ -160,6 +161,7 @@ fn main() {
                         .help("Listen port")
                         .default_value("4242")
                         .short("p")
+                        .long("port")
                         .takes_value(true)
                 )
         )
@@ -171,12 +173,20 @@ fn main() {
                         .help("Block name")
                         .default_value("minecraft:diamond_block")
                         .short("b")
+                        .long("block")
                         .takes_value(true)
                 )
                 .arg(
                     Arg::with_name("list")
+                        .long("list")
                         .help("List available blocks")
                         .short("l")
+                )
+                .arg(
+                    Arg::with_name("force")
+                        .help("Rescue from crash on corupted file but extremly slow")
+                        .short("f")
+                        .long("force")
                 )
         )
         .get_matches();
@@ -228,16 +238,33 @@ fn main() {
                     println!("{}", item.name);
                 }
             } else {
-                let target = matches.value_of("block").expect("Block name");
-                let provider = AnvilChunkProvider::new(&output);
-                for dir in fs::read_dir(output.clone()).expect("Wrong map directory").filter(|e| e.is_ok()).map(|e| e.unwrap()) {
-                    if let Some(region) = RegionFile::new(dir.path()) {
-                        for cx in (0..32).into_iter().map(|cx| cx + (region.x * 32)) {
-                            for cz in (0..32).into_iter().map(|cz| cz + (region.z * 32)) {
-                                if let Ok(chunk) = provider.load_chunk(cx, cz) {
-                                    
-                                    find(cx * 16, cz * 16,chunk, target);
-
+                let target = matches.value_of("block").expect("Block name").to_string();
+                if matches.is_present("force") {
+                    for dir in fs::read_dir(output.clone()).expect("Wrong map directory").filter(|e| e.is_ok()).map(|e| e.unwrap()) {
+                        if let Some(region) = RegionFile::new(dir.path()) {
+                            let output = output.clone();
+                            let target = target.clone();
+                             thread::spawn(move || {
+                                let provider = AnvilChunkProvider::new(&output);
+                                for cx in (0..32).into_iter().map(|cx| cx + (region.x * 32)) {
+                                    for cz in (0..32).into_iter().map(|cz| cz + (region.z * 32)) {
+                                        if let Ok(chunk) = provider.load_chunk(cx, cz) {
+                                            find(cx * 16, cz * 16,chunk, &target);
+                                        }
+                                    }
+                                }
+                            }).join();
+                        }
+                    }
+                } else {
+                    let provider = AnvilChunkProvider::new(&output);
+                    for dir in fs::read_dir(output.clone()).expect("Wrong map directory").filter(|e| e.is_ok()).map(|e| e.unwrap()) {
+                        if let Some(region) = RegionFile::new(dir.path()) {
+                            for cx in (0..32).into_iter().map(|cx| cx + (region.x * 32)) {
+                                for cz in (0..32).into_iter().map(|cz| cz + (region.z * 32)) {
+                                    if let Ok(chunk) = provider.load_chunk(cx, cz) {
+                                        find(cx * 16, cz * 16,chunk, &target);
+                                    }
                                 }
                             }
                         }
