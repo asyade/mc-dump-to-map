@@ -12,7 +12,7 @@ const MAX_BITS_PER_BLOCK: u8 = 8;
 type BlockId = i64;
 
 lazy_static! {
-    static ref PALETTE: GlobalPalette = {
+    pub static ref PALETTE: GlobalPalette = {
         let file = std::fs::OpenOptions::new().read(true).open(std::env::var("PALETTE").expect("PALETTE")).expect("PALETTE File");
         GlobalPalette::parse(file)
     };
@@ -20,7 +20,7 @@ lazy_static! {
 
 
 pub struct GlobalPalette {
-    blocks: HashMap<i64, BlockDefinition>,
+    pub blocks: HashMap<i64, BlockDefinition>,
 }
 
 impl GlobalPalette {
@@ -56,8 +56,8 @@ impl GlobalPalette {
 
 #[derive(Clone, Debug)]
 pub struct BlockDefinition {
-    name: String,
-    properties: Option<CompoundTag>,
+    pub name: String,
+    pub properties: Option<CompoundTag>,
 }
 
 impl ops::Index<BlockId> for GlobalPalette {

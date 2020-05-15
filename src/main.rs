@@ -163,6 +163,22 @@ fn main() {
                         .takes_value(true)
                 )
         )
+        .subcommand(
+            SubCommand::with_name("find")
+                .about("Find coords of a block")
+                .arg(
+                    Arg::with_name("block")
+                        .help("Block name")
+                        .default_value("minecraft:diamond_block")
+                        .short("b")
+                        .takes_value(true)
+                )
+                .arg(
+                    Arg::with_name("list")
+                        .help("List available blocks")
+                        .short("l")
+                )
+        )
         .get_matches();
     let output = matches.value_of("output").unwrap().to_string();
     match  matches.subcommand() {
@@ -205,7 +221,74 @@ fn main() {
                     }
                 });
             }
-        }
+        },
+        ("find", Some(matches)) => {
+            if matches.is_present("list") {
+                for item in models::PALETTE.blocks.values() {
+                    println!("{}", item.name);
+                }
+            } else {
+                let target = matches.value_of("block").expect("Block name");
+                let provider = AnvilChunkProvider::new(&output);
+                for dir in fs::read_dir(output.clone()).expect("Wrong map directory").filter(|e| e.is_ok()).map(|e| e.unwrap()) {
+                    if let Some(region) = RegionFile::new(dir.path()) {
+                        for cx in (0..32).into_iter().map(|cx| cx + (region.x * 32)) {
+                            for cz in (0..32).into_iter().map(|cz| cz + (region.z * 32)) {
+                                if let Ok(chunk) = provider.load_chunk(cx, cz) {
+                                    
+                                    find(cx * 16, cz * 16,chunk, target);
+
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         _ => error!("Unknow subcommand"),
+    }
+}
+
+fn find(x: i32, z: i32, tag: nbt::CompoundTag, target: &str) -> Option<()> {
+    fn find_in_section(x: i32, z: i32, section: &nbt::CompoundTag, target: &str) -> Option<()> {
+        let palette = section.get_compound_tag_vec("Palette").ok()?;
+        let mut found = false;
+        for item in palette {
+            if item.get_str("Name").ok() == Some(target) {
+                found = true;
+            }
+        }
+        if found {
+            info!("{} 0 {}", x, z);
+        }
+        Some(())
+    }
+
+    let level = tag.get_compound_tag("Level").ok()?;
+    let sections = level.get_compound_tag_vec("Sections").ok()?;
+    for section in sections {
+        let _ = find_in_section( x, z,section, target);
+    }
+    Some(())
+}
+
+struct RegionFile {
+    x: i32,
+    z: i32,
+    path: PathBuf,
+}
+
+impl RegionFile {
+    fn new(path: PathBuf) -> Option<RegionFile> {
+        let s: &str = path.file_stem()?.to_str()?;
+        let mut sp = s.split('.');
+        sp.next()?;
+        let x = sp.next()?.parse().ok()?;
+        let z = sp.next()?.parse().ok()?;
+        Some(RegionFile {
+            x,
+            z,
+            path,
+        })
     }
 }
