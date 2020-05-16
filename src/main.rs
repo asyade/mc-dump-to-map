@@ -308,16 +308,25 @@ async fn main() {
 fn find(x: i32, z: i32, tag: nbt::CompoundTag, target: &[String]) -> Option<()> {
     fn find_in_section(x: i32, z: i32, section: &nbt::CompoundTag, target: &[String]) -> Option<()> {
         let palette = section.get_compound_tag_vec("Palette").ok()?;
-        let mut found = false;
+        let mut found = BTreeMap::new();
         for item in palette {
             for target in target {
             if item.get_str("Name").ok() == Some(target) {
-                found = true;
+                match found.entry(target) {
+                    btree_map::Entry::Occupied(mut e) => {
+                        *e.get_mut() += 1;
+                    },
+                    btree_map::Entry::Vacant(mut e) => {
+                        e.insert(1);
+                    }
+                };
             }
         }
         }
-        if found {
-            info!("{} 0 {}", x, z);
+        if found.len() > 0 {
+            for (k,v) in found {
+                info!("{} 100 {} -> Found {} {}", x, z, v, k);
+            }
         }
         Some(())
     }
