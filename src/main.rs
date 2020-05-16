@@ -1,3 +1,4 @@
+use actix::prelude::*;
 #[macro_use]
 extern crate lazy_static;
 extern crate pretty_env_logger;
@@ -130,18 +131,61 @@ fn run(output: &str, patch: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+struct FindActor {
+    target: Vec<String>,
+    path: String,
+}
 
-fn main() {
+impl FindActor {
+    fn new(target: Vec<String>, path: String) -> Self {
+        Self {
+            target,
+            path,
+        }
+    }
+}
+
+#[derive(Message, Debug)]
+#[rtype(result = "()")]
+struct FindRequest(RegionFile);
+
+impl Handler<FindRequest> for FindActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: FindRequest, ctx: &mut SyncContext<Self>) {
+        let provider =  AnvilChunkProvider::new(&self.path);
+        let region = msg.0;
+        for cx in (0..32).into_iter().map(|cx| cx + (region.x * 32)) {
+            for cz in (0..32).into_iter().map(|cz| cz + (region.z * 32)) {
+                if let Ok(chunk) = provider.load_chunk(cx, cz) {
+                    find(cx * 16, cz * 16,chunk, &self.target[..]);
+                }
+            }
+        }
+    }
+}
+
+impl actix::Actor for FindActor {
+    type Context = SyncContext<Self>;
+}
+
+
+
+#[actix_rt::main]
+async fn main() {
+    if std::env::var("PALETTE").is_err() {
+        std::env::set_var("PALETTE", "./res/blocks-1.15.0.json");
+    }
     pretty_env_logger::init();
     let matches = App::new("dump-to-map")
-        .arg(
-            Arg::with_name("output")
-                .help("Minecraft region directory to update")
-                .short("o")
-                .required(true)
-                .takes_value(true)
-        )
-        .subcommand(
+    .arg(
+        Arg::with_name("output")
+            .help("Minecraft region directory to update")
+            .short("o")
+            .required(true)
+            .takes_value(true)
+    )
+    .subcommand(
             SubCommand::with_name("bulk")
                 .about("Copy a bunch of json chunk sections into an existing minecraft world")
                 .arg(
@@ -174,6 +218,7 @@ fn main() {
                         .default_value("minecraft:diamond_block")
                         .short("b")
                         .long("block")
+                        .multiple(true)
                         .takes_value(true)
                 )
                 .arg(
@@ -238,37 +283,21 @@ fn main() {
                     println!("{}", item.name);
                 }
             } else {
-                let target = matches.value_of("block").expect("Block name").to_string();
-                if matches.is_present("force") {
-                    for dir in fs::read_dir(output.clone()).expect("Wrong map directory").filter(|e| e.is_ok()).map(|e| e.unwrap()) {
-                        if let Some(region) = RegionFile::new(dir.path()) {
-                            let output = output.clone();
-                            let target = target.clone();
-                             thread::spawn(move || {
-                                let provider = AnvilChunkProvider::new(&output);
-                                for cx in (0..32).into_iter().map(|cx| cx + (region.x * 32)) {
-                                    for cz in (0..32).into_iter().map(|cz| cz + (region.z * 32)) {
-                                        if let Ok(chunk) = provider.load_chunk(cx, cz) {
-                                            find(cx * 16, cz * 16,chunk, &target);
-                                        }
-                                    }
-                                }
-                            }).join();
-                        }
+                let oc = output.clone();
+                let target: Vec<String> = matches.values_of("block").expect("Block to find").into_iter().map(|e| e.to_string()).collect();
+                let mut handles = vec![];
+                let addr = SyncArbiter::start(16, move || {
+                    let output = output.clone();
+                    let target =  target.clone();
+                    FindActor::new(target, output)
+                });
+                for dir in fs::read_dir(&oc).expect("Wrong map directory").filter(|e| e.is_ok()).map(|e| e.unwrap()) {
+                    if let Some(region) = RegionFile::new(dir.path()) {
+                       handles.push( addr.send(FindRequest(region)));
                     }
-                } else {
-                    let provider = AnvilChunkProvider::new(&output);
-                    for dir in fs::read_dir(output.clone()).expect("Wrong map directory").filter(|e| e.is_ok()).map(|e| e.unwrap()) {
-                        if let Some(region) = RegionFile::new(dir.path()) {
-                            for cx in (0..32).into_iter().map(|cx| cx + (region.x * 32)) {
-                                for cz in (0..32).into_iter().map(|cz| cz + (region.z * 32)) {
-                                    if let Ok(chunk) = provider.load_chunk(cx, cz) {
-                                        find(cx * 16, cz * 16,chunk, &target);
-                                    }
-                                }
-                            }
-                        }
-                    }
+                }
+                for handle in handles {
+                    let _ = handle.await;
                 }
             }
         },
@@ -276,14 +305,16 @@ fn main() {
     }
 }
 
-fn find(x: i32, z: i32, tag: nbt::CompoundTag, target: &str) -> Option<()> {
-    fn find_in_section(x: i32, z: i32, section: &nbt::CompoundTag, target: &str) -> Option<()> {
+fn find(x: i32, z: i32, tag: nbt::CompoundTag, target: &[String]) -> Option<()> {
+    fn find_in_section(x: i32, z: i32, section: &nbt::CompoundTag, target: &[String]) -> Option<()> {
         let palette = section.get_compound_tag_vec("Palette").ok()?;
         let mut found = false;
         for item in palette {
+            for target in target {
             if item.get_str("Name").ok() == Some(target) {
                 found = true;
             }
+        }
         }
         if found {
             info!("{} 0 {}", x, z);
@@ -299,6 +330,7 @@ fn find(x: i32, z: i32, tag: nbt::CompoundTag, target: &str) -> Option<()> {
     Some(())
 }
 
+#[derive(Debug)]
 struct RegionFile {
     x: i32,
     z: i32,
