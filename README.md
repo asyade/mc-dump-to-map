@@ -1,4 +1,6 @@
-Convert minecraft chunk packet (https://wiki.vg/Chunk_Format) obtained using https://github.com/asyade/cort2bot into a playable map
+# Dump-to-Map
+`dump-to-map` is a tool to convert minecraft chunk packet (https://wiki.vg/Chunk_Format) obtained using https://github.com/asyade/cort2bot into a playable map
+> **Note**: This tool is old and only supports Minecraft 1.15.x
 
 # Compatibility
 Version 1.15.x
